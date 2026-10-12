@@ -1,0 +1,6 @@
+
+positive variable P(r)
+
+equation foc_qs(r), foc_dq(r), foc_x(r)
+foc_qs(r).. c + d * P(r) =g= P(r) ; 
+foc_1d
