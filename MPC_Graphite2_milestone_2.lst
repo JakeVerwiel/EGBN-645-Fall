@@ -1,0 +1,2592 @@
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 1
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+C o m p i l a t i o n
+
+
+   1  set r /USA, China, ROW/ ;
+   2   
+   3  set year /2020*2025/;
+   4   
+   5  parameter
+   6  pbar(r),
+   7  qbar_s(r) /USA 0, CHINA 75, ROW 25/,
+   8  qbar_d(r) /USA 20.5, CHINA 10, ROW 69.5/,
+   9  e_d /-0.58/,
+  10  e_s /0.2/ ;
+  11   
+  12  table priceIndex(year,r)
+  13           USA  CHINA  ROW
+  14  2020     100     85   95
+  15  2021     110     90  102
+  16  2022     135    115  125
+  17  2023     120    105  112
+  18  2024     115     95  108
+  19  2025     125    100  115
+  20  ;
+  21   
+  22  pbar(r) = sum(year, priceIndex(year,r)) / card(year);
+  23   
+  24  qbar_d("row") = sum(r,qbar_s(r)) - qbar_d("USA") - qbar_d("China") ;
+  25   
+  26  parameter a(r), b(r),  c(r),  d(r);
+  27   
+  28  b(r) = pbar(r) / (e_d * qbar_d(r)) ;
+  29  a(r) = pbar(r) - b(r) * qbar_d(r) ;
+  30  d(r)$(qbar_s(r) > 0) = pbar(r) / (e_s * qbar_s(r));
+  31  c(r)$(qbar_s(r) > 0) = pbar(r) - d(r) * qbar_s(r);
+  32   
+  33  * Potential US graphite producer
+  34  c("USA") = 100;
+  35  d("USA") = 2;
+  36   
+  37  scalar e;
+  38  parameter tradeCost(r);
+  39  tradeCost(r) = 0;
+  40  tradeCost("China") = 10;
+  41  tradeCost("ROW") = 10;
+  42   
+  43  positive variable Qd(r), Qs(r) ;
+  44  positive variable X(r) "exports" ;
+  45  Qs.fx("USA") = 0;
+  46  X.fx("USA") = 0;
+  47  variable W "total welfare" ;
+  48   
+  49  equation objfn, market_clearing(r) ;
+  50   
+  51  objfn.. W =e=
+  52      sum(r, a(r)*Qd(r) + b(r)*sqr(Qd(r))/2
+  53      - c(r)*Qs(r) - d(r)*sqr(Qs(r))/2)
+  54      - sum(r, tradeCost(r)*X(r));
+  55   
+      market_clearing_usa.. Qd("USA") + X("USA") =e= Qs("USA") ;
+      market_clearing_china.. Qd("China") + X("China") =e= Qs("China") ;
+      market_clearing_row.. Qd("ROW") =e= Qs("ROW") + X("USA") + X("China")  ; 
+  61   
+  62  alias(r,rr);
+  63   
+  64  market_clearing(r)..
+  65      Qs(r)
+  66      + sum(rr$(not sameas(rr,"USA")), X(rr))$sameas(r,"USA")
+  67      =g=
+  68      Qd(r)
+  69      + X(r)$(not sameas(r,"USA"));
+  70   
+  71  model simple /all/;
+  72   
+  73  solve simple using QCP maximizing W;
+  74   
+  75  set scenario /BAU/;
+  76  set metric /Qd, Qs, P, Exports/;
+  77   
+  78  parameter rep(scenario,metric,r);
+  79   
+  80  rep("BAU","Qd",r) = Qd.l(r);
+  81  rep("BAU","Qs",r) = Qs.l(r);
+  82  rep("BAU","P",r) = -market_clearing.m(r);
+  83  rep("BAU","Exports",r) = X.l(r);
+  84   
+  85   
+  86  execute_unload 'rep_graphite_mcp.gdx' ;
+  87   
+  88   
+  89   
+  90  positive variable P(r) ;
+  91   
+  92  equation foc_qs(r), foc_qd(r), foc_x(r) ;
+  93   
+  94  foc_qs(r).. c(r) + d(r) * Qs(r) =g= P(r) ;
+  95  foc_qd(r)..   P(r) =g= a(r)+b(r)*Qd(r) ;
+  96  foc_x(r)$(not sameas(r,"USA"))..
+  97      tradeCost(r) + P(r) =g= P("USA");
+  98   
+  99  model graphite_mcp
+ 100  /
+ 101  market_clearing.P,
+ 102  foc_qs.qs,
+ 103  foc_qd.qd,
+ 104  foc_x.X
+ 105  /;
+ 106   
+ 107  P.l(r) = max(0, -market_clearing.m(r));
+ 108   
+ 109  solve graphite_mcp using MCP;
+ 110   
+ 111  parameter results(*,*,r);
+ 112  parameter welfare(*);
+ 113   
+ 114  * Save baseline results
+ 115  results("Baseline","Price",r)   = P.l(r);
+ 116  results("Baseline","Demand",r)  = Qd.l(r);
+ 117  results("Baseline","Supply",r)  = Qs.l(r);
+ 118  results("Baseline","Exports",r) = X.l(r);
+ 119   
+ 120  welfare("Baseline") =
+ 121      sum(r,
+ 122          a(r)*Qd.l(r) + b(r)*sqr(Qd.l(r))/2
+ 123          - c(r)*Qs.l(r) - d(r)*sqr(Qs.l(r))/2
+ 124      )
+ 125      - sum(r, tradeCost(r)*X.l(r));
+ 126   
+ 127   
+ 128  * ==========================================
+ 129  * MILESTONE 1: CHINESE PRODUCTION EXPANSION
+ 130  * ==========================================
+ 131   
+ 132  set productionShock /S10, S20, S30, S40/;
+ 133   
+ 134  parameter shockPct(productionShock)
+ 135  /
+ 136  S10 0.10
+ 137  S20 0.20
+ 138  S30 0.30
+ 139  S40 0.40
+ 140  /;
+ 141   
+ 142  scalar baselineChinaProduction;
+ 143   
+ 144  parameter targetProduction(productionShock);
+ 145   
+ 146  * Save baseline Chinese production
+ 147  baselineChinaProduction = Qs.l("China");
+ 148   
+ 149  * ==========================================
+ 150  * RUN PRODUCTION EXPANSION SCENARIOS
+ 151  * ==========================================
+ 152   
+ 153  loop(productionShock,
+ 154   
+ 155  * Increase Chinese production
+ 156      Qs.fx("China") =
+ 157          baselineChinaProduction*(1+shockPct(productionShock));
+ 158   
+ 159      targetProduction(productionShock) =
+ 160          baselineChinaProduction*(1+shockPct(productionShock));
+ 161   
+ 162  * Solve new welfare equilibrium
+ 163      solve simple using QCP maximizing W;
+ 164   
+ 165  * Initialize equilibrium prices
+ 166      P.l(r) = max(0,-market_clearing.m(r));
+ 167   
+ 168  * Solve MCP equilibrium
+ 169      solve graphite_mcp using MCP;
+ 170   
+ 171  * Save scenario results
+ 172      results(productionShock,"Price",r) = P.l(r);
+ 173      results(productionShock,"Demand",r) = Qd.l(r);
+ 174      results(productionShock,"Supply",r) = Qs.l(r);
+ 175      results(productionShock,"Exports",r) = X.l(r);
+ 176   
+ 177  * Calculate welfare
+ 178      welfare(productionShock) =
+ 179          sum(r,
+ 180              a(r)*Qd.l(r)
+ 181              + b(r)*sqr(Qd.l(r))/2
+ 182              - c(r)*Qs.l(r)
+ 183              - d(r)*sqr(Qs.l(r))/2
+ 184          )
+ 185          - sum(r,tradeCost(r)*X.l(r));
+ 186   
+ 187  );
+ 188   
+ 189  * Restore Chinese production flexibility
+ 190  Qs.lo("China") = 0;
+ 191  Qs.up("China") = +inf;
+ 192   
+ 193  * ==========================================
+ 194  * DISPLAY MILESTONE 1 RESULTS
+ 195  * ==========================================
+ 196   
+ 197  display baselineChinaProduction;
+ 198  display targetProduction;
+ 199  display results;
+ 200  display welfare;
+ 201   
+ 202  execute_unload 'graphite_milestone1.gdx',
+ 203      results, welfare, targetProduction;
+ 204   
+EXIT c:\Users\jverw\OneDrive\Documents\GitHub\EGBN 645 Fall\MPC_Graphite2_milestone_2.gms
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 2
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Include File Summary
+
+
+   SEQ   GLOBAL TYPE      PARENT   LOCAL  INCLVL  FILENAME
+
+     1        1 INPUT          0       0       0  c:\Users\jverw\OneDrive\Documents\GitHub\EGBN 645 Fall\MPC_Graphite2_milestone_2.gms
+     2      205 EXIT           1     205       0  c:\Users\jverw\OneDrive\Documents\GitHub\EGBN 645 Fall\MPC_Graphite2_milestone_2.gms
+
+
+COMPILATION TIME     =        0.000 SECONDS      3 MB  54.3.1 61154be4 WEX-WEI
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 3
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE simple Using QCP From line 73
+
+
+---- objfn  =E=  
+
+objfn..  - (320.086206896552)*Qd(USA) - (267.873563218391)*Qd(China) - (298.293103448276)*Qd(ROW) + (100)*Qs(USA) - (393.333333333333)*Qs(China) - (438)*Qs(ROW) + 10*X(China) + 10*X(ROW) + W =E= 0 ; (LHS = 0)
+     
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 0)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 4
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE simple Using QCP From line 73
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+    (-320.0862) objfn
+       -1       market_clearing(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+    (-267.8736) objfn
+       -1       market_clearing(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+    (-298.2931) objfn
+       -1       market_clearing(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+     (100)      objfn
+        1       market_clearing(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+    (-393.3333) objfn
+        1       market_clearing(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+    (-438)      objfn
+        1       market_clearing(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- W  total welfare
+
+W
+                (.LO, .L, .UP, .M = -INF, 0, +INF, 0)
+        1       objfn
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 5
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE simple Using QCP From line 73
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [        NA,        NA] - Zero values observed as well
+Bound     [min, max] : [        NA,        NA] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 4.380E+02]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 6
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE simple Using QCP From line 73
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           2     SINGLE EQUATIONS            4
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES            9
+NON ZERO ELEMENTS            19     NON LINEAR N-Z              6
+CODE LENGTH                  44     CONSTANT POOL              27
+
+
+GENERATION TIME      =        0.000 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 7
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE simple Using QCP From line 73
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   simple              OBJECTIVE  W
+     TYPE    QCP                 DIRECTION  MAXIMIZE
+     SOLVER  CONOPT              FROM LINE  73
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      2 Locally Optimal
+**** OBJECTIVE VALUE            29792.6469
+
+ RESOURCE USAGE, LIMIT          0.015 10000000000.000
+ ITERATION COUNT, LIMIT         4    2147483647
+ EVALUATION ERRORS              0             0
+ 
+ 
+    C O N O P T   version 4.39.1
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 4 constraints and 9 variables
+    with 19 Jacobian elements, 6 of which are nonlinear.
+    The Hessian of the Lagrangian has 6 elements on the diagonal,
+    0 elements below the diagonal, and 6 nonlinear variables.
+ 
+    The pre-triangular part of the model has 0 constraints and 1 variables.
+    The post-triangular part of the model has 1 constraints and variables.
+    There are 3 penalty and minimax constraints with 3 variables.
+ 
+    Preprocessed model has 3 constraints and 7 variables
+    with 9 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. Reduced gradient less than tolerance.
+ 
+ 
+ CONOPT time Total                            0.000 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.000 =  0.0%
+             2nd Derivative evaluations       0.000 =  0.0%
+             Directional 2nd Deriv(Hess)      0.000 =  0.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU objfn               .              .              .             1.0000      
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF          -10.0000      
+China          .            12.8219        +INF             .          
+ROW            .              .            +INF         -217.0425      
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF            EPS         
+ROW            .            29.9106        +INF            EPS         
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .           -90.0000      
+China          .            60.0000        +INF            EPS         
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF            EPS         
+ROW            .              .            +INF         -217.0425      
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR W                 -INF        29792.6469        +INF             .          
+
+  W  total welfare
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 8
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE graphite_mcp Using MCP From line 109
+
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 12.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+
+---- foc_qs  =G=  
+
+foc_qs(USA)..  2*Qs(USA) - P(USA) =G= -100 ; (LHS = -10.0000000000001)
+     
+foc_qs(China)..  6.55555555555556*Qs(China) - P(China) =G= 393.333333333333 ; (LHS = 393.333333333333)
+     
+foc_qs(ROW)..  21.9*Qs(ROW) - P(ROW) =G= 438 ; (LHS = 438)
+     
+
+---- foc_qd  =G=  
+
+foc_qd(USA)..  9.88225399495374*Qd(USA) + P(USA) =G= 320.086206896552 ; (LHS = 320.086206896552)
+     
+foc_qd(China)..  16.9540229885057*Qd(China) + P(China) =G= 267.873563218391 ; (LHS = 267.873563218391)
+     
+foc_qd(ROW)..  2.71644753162987*Qd(ROW) + P(ROW) =G= 298.293103448276 ; (LHS = 298.293103448276)
+     
+
+---- foc_x  =G=  
+
+foc_x(China)..  - P(USA) + P(China) =G= -10 ; (LHS = -10.0000000000001)
+     
+foc_x(ROW)..  - P(USA) + P(ROW) =G= -10 ; (LHS = 207.042485102626)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 9
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE graphite_mcp Using MCP From line 109
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+       -1       market_clearing(USA)
+        9.8823  foc_qd(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, EPS)
+       -1       market_clearing(China)
+       16.954   foc_qd(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, EPS)
+       -1       market_clearing(ROW)
+        2.7164  foc_qd(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, -89.9999999999999)
+        1       market_clearing(USA)
+        2       foc_qs(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 0, 60, +INF, EPS)
+        1       market_clearing(China)
+        6.5556  foc_qs(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+        1       market_clearing(ROW)
+       21.9     foc_qs(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, EPS)
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, -217.042485102626)
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- P  
+
+P(USA)
+                (.LO, .L, .UP, .M = 0, 10.0000000000001, +INF, 0)
+       -1       foc_qs(USA)
+        1       foc_qd(USA)
+       -1       foc_x(China)
+       -1       foc_x(ROW)
+
+P(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       foc_qs(China)
+        1       foc_qd(China)
+        1       foc_x(China)
+
+P(ROW)
+                (.LO, .L, .UP, .M = 0, 217.042485102626, +INF, 0)
+       -1       foc_qs(ROW)
+        1       foc_qd(ROW)
+        1       foc_x(ROW)
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 10
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE graphite_mcp Using MCP From line 109
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 1.000E+01, 4.380E+02] - Zero values observed as well
+Bound     [min, max] : [        NA,        NA] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 2.190E+01]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 11
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE graphite_mcp Using MCP From line 109
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           4     SINGLE EQUATIONS           11
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES           11
+NON ZERO ELEMENTS            26     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16
+
+
+GENERATION TIME      =        0.016 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 12
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE graphite_mcp Using MCP From line 109
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   graphite_mcp        
+     TYPE    MCP                 
+     SOLVER  PATH                FROM LINE  109
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+
+ RESOURCE USAGE, LIMIT          0.016 10000000000.000
+ ITERATION COUNT, LIMIT         0    2147483647
+ EVALUATION ERRORS              0             0
+10 row/cols, 23 non-zeros, 23.00% dense.
+
+Path 5.2.01 (Fri Aug 21 16:50:07 2026)
+Written by Todd Munson, Steven Dirkse, Youngdae Kim, and Michael Ferris
+
+INITIAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+INITIAL JACOBIAN NORM STATISTICS
+Maximum Row Norm. . . . . . . .  2.2900e+01 eqn: (foc_qs(ROW))
+Minimum Row Norm. . . . . . . .  2.0000e+00 eqn: (foc_x(China))
+Maximum Column Norm . . . . . .  2.2900e+01 var: (Qs(ROW))
+Minimum Column Norm . . . . . .  2.0000e+00 var: (X(China))
+
+FINAL STATISTICS
+Inf-Norm of Complementarity . .  8.9813e-13 eqn: (foc_qd(China))
+Inf-Norm of Normal Map. . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Minimum Map . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Fischer Function. .  5.6843e-14 eqn: (foc_qd(ROW))
+Inf-Norm of Grad Fischer Fcn. .  9.6372e-13 eqn: (foc_qd(China))
+Two-Norm of Grad Fischer Fcn. .  9.7932e-13
+
+FINAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF           10.0000      
+China          .            12.8219        +INF             .          
+ROW            .              .            +INF          217.0425      
+
+---- EQU foc_qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA        -100.0000       -10.0000        +INF             .          
+China       393.3333       393.3333        +INF           60.0000      
+ROW         438.0000       438.0000        +INF           29.9106      
+
+---- EQU foc_qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA         320.0862       320.0862        +INF           31.3781      
+China       267.8736       267.8736        +INF           15.8000      
+ROW         298.2931       298.2931        +INF           29.9106      
+
+---- EQU foc_x  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China       -10.0000       -10.0000        +INF           31.3781      
+ROW         -10.0000       207.0425        +INF             .          
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF      5.684342E-14      
+ROW            .            29.9106        +INF      -5.68434E-14      
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .            90.0000      
+China          .            60.0000        +INF             .          
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF      -5.68434E-14      
+ROW            .              .            +INF          217.0425      
+
+---- VAR P  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            10.0000        +INF             .          
+China          .              .            +INF           12.8219      
+ROW            .           217.0425        +INF             .          
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0  REDEFINED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 13
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE simple Using QCP From line 163
+
+
+---- objfn  =E=  
+
+objfn..  - (10.0000000000001)*Qd(USA) + (5.6843418860808E-14)*Qd(China) - (217.042485102626)*Qd(ROW) + (100)*Qs(USA) + (39.3333333333333)*Qs(China) + (217.042485102626)*Qs(ROW) + 10*X(China) + 10*X(ROW) + W =E= 0 ; (LHS = 117.999999999996, INFES = 117.999999999996 ****)
+     
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 18.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 14
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE simple Using QCP From line 163
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+     (-10)      objfn
+       -1       market_clearing(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, 5.6843418860808E-14)
+ (5.684342E-14) objfn
+       -1       market_clearing(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, -5.6843418860808E-14)
+    (-217.0425) objfn
+       -1       market_clearing(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, 89.9999999999999)
+     (100)      objfn
+        1       market_clearing(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 66, 66, 66, 0)
+      (39.3333) objfn
+        1       market_clearing(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+     (217.0425) objfn
+        1       market_clearing(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, -5.6843418860808E-14)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 217.042485102626)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- W  total welfare
+
+W
+                (.LO, .L, .UP, .M = -INF, 29792.6468958772, +INF, 0)
+        1       objfn
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 15
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE simple Using QCP From line 163
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [        NA,        NA] - Zero values observed as well
+Bound     [min, max] : [ 6.600E+01, 6.600E+01] - Zero values observed as well
+Matrix    [min, max] : [ 5.684E-14, 2.170E+02]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 16
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE simple Using QCP From line 163
+
+
+LOOPS                           productionShock   S10
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           2     SINGLE EQUATIONS            4
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES            9
+NON ZERO ELEMENTS            19     NON LINEAR N-Z              6
+CODE LENGTH                  44     CONSTANT POOL              27
+
+
+GENERATION TIME      =        0.000 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S10
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 17
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE simple Using QCP From line 163
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   simple              OBJECTIVE  W
+     TYPE    QCP                 DIRECTION  MAXIMIZE
+     SOLVER  CONOPT              FROM LINE  163
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      2 Locally Optimal
+**** OBJECTIVE VALUE            29674.6469
+
+ RESOURCE USAGE, LIMIT          0.031 10000000000.000
+ ITERATION COUNT, LIMIT         1    2147483647
+ EVALUATION ERRORS              0             0
+ 
+ 
+    C O N O P T   version 4.39.1
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 4 constraints and 9 variables
+    with 19 Jacobian elements, 6 of which are nonlinear.
+    The Hessian of the Lagrangian has 6 elements on the diagonal,
+    0 elements below the diagonal, and 6 nonlinear variables.
+ 
+    The pre-triangular part of the model has 0 constraints and 2 variables.
+    The post-triangular part of the model has 1 constraints and variables.
+    There are 2 penalty and minimax constraints with 2 variables.
+ 
+    Preprocessed model has 3 constraints and 6 variables
+    with 8 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. Reduced gradient less than tolerance.
+ 
+ 
+ CONOPT time Total                            0.003 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.000 =  0.0%
+             2nd Derivative evaluations       0.000 =  0.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU objfn               .              .              .             1.0000      
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF          -10.0000      
+China          .            18.8219        +INF             .          
+ROW            .              .            +INF         -217.0425      
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF            EPS         
+ROW            .            29.9106        +INF            EPS         
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .           -90.0000      
+China        66.0000        66.0000        66.0000       -39.3333      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF            EPS         
+ROW            .              .            +INF         -217.0425      
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR W                 -INF        29674.6469        +INF             .          
+
+  W  total welfare
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 18
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE graphite_mcp Using MCP From line 169
+
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 18.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+
+---- foc_qs  =G=  
+
+foc_qs(USA)..  2*Qs(USA) - P(USA) =G= -100 ; (LHS = -10.0000000000001)
+     
+foc_qs(China)..  6.55555555555556*Qs(China) - P(China) =G= 393.333333333333 ; (LHS = 432.666666666667)
+     
+foc_qs(ROW)..  21.9*Qs(ROW) - P(ROW) =G= 438 ; (LHS = 438)
+     
+
+---- foc_qd  =G=  
+
+foc_qd(USA)..  9.88225399495374*Qd(USA) + P(USA) =G= 320.086206896552 ; (LHS = 320.086206896552)
+     
+foc_qd(China)..  16.9540229885057*Qd(China) + P(China) =G= 267.873563218391 ; (LHS = 267.873563218391)
+     
+foc_qd(ROW)..  2.71644753162987*Qd(ROW) + P(ROW) =G= 298.293103448276 ; (LHS = 298.293103448276)
+     
+
+---- foc_x  =G=  
+
+foc_x(China)..  - P(USA) + P(China) =G= -10 ; (LHS = -10.0000000000001)
+     
+foc_x(ROW)..  - P(USA) + P(ROW) =G= -10 ; (LHS = 207.042485102626)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 19
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE graphite_mcp Using MCP From line 169
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+       -1       market_clearing(USA)
+        9.8823  foc_qd(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, EPS)
+       -1       market_clearing(China)
+       16.954   foc_qd(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, EPS)
+       -1       market_clearing(ROW)
+        2.7164  foc_qd(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, -89.9999999999999)
+        1       market_clearing(USA)
+        2       foc_qs(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 66, 66, 66, -39.3333333333333)
+        1       market_clearing(China)
+        6.5556  foc_qs(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+        1       market_clearing(ROW)
+       21.9     foc_qs(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, EPS)
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, -217.042485102626)
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- P  
+
+P(USA)
+                (.LO, .L, .UP, .M = 0, 10.0000000000001, +INF, 0)
+       -1       foc_qs(USA)
+        1       foc_qd(USA)
+       -1       foc_x(China)
+       -1       foc_x(ROW)
+
+P(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 12.821914893617)
+       -1       foc_qs(China)
+        1       foc_qd(China)
+        1       foc_x(China)
+
+P(ROW)
+                (.LO, .L, .UP, .M = 0, 217.042485102626, +INF, 0)
+       -1       foc_qs(ROW)
+        1       foc_qd(ROW)
+        1       foc_x(ROW)
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 20
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 1.000E+01, 4.380E+02] - Zero values observed as well
+Bound     [min, max] : [ 6.600E+01, 6.600E+01] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 2.190E+01]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 21
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+LOOPS                           productionShock   S10
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           4     SINGLE EQUATIONS           11
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES           11
+NON ZERO ELEMENTS            26     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16
+
+
+GENERATION TIME      =        0.015 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S10
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 22
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE graphite_mcp Using MCP From line 169
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   graphite_mcp        
+     TYPE    MCP                 
+     SOLVER  PATH                FROM LINE  169
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+
+ RESOURCE USAGE, LIMIT          0.015 10000000000.000
+ ITERATION COUNT, LIMIT         0    2147483647
+ EVALUATION ERRORS              0             0
+9 row/cols, 20 non-zeros, 24.69% dense.
+
+Path 5.2.01 (Fri Aug 21 16:50:07 2026)
+Written by Todd Munson, Steven Dirkse, Youngdae Kim, and Michael Ferris
+
+INITIAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+INITIAL JACOBIAN NORM STATISTICS
+Maximum Row Norm. . . . . . . .  2.2900e+01 eqn: (foc_qs(ROW))
+Minimum Row Norm. . . . . . . .  2.0000e+00 eqn: (market_clearing(China))
+Maximum Column Norm . . . . . .  2.2900e+01 var: (Qs(ROW))
+Minimum Column Norm . . . . . .  2.0000e+00 var: (P(China))
+
+FINAL STATISTICS
+Inf-Norm of Complementarity . .  8.9813e-13 eqn: (foc_qd(China))
+Inf-Norm of Normal Map. . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Minimum Map . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Fischer Function. .  5.6843e-14 eqn: (foc_qd(ROW))
+Inf-Norm of Grad Fischer Fcn. .  9.6372e-13 eqn: (foc_qd(China))
+Two-Norm of Grad Fischer Fcn. .  9.7932e-13
+
+FINAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF           10.0000      
+China          .            18.8219        +INF             .          
+ROW            .              .            +INF          217.0425      
+
+---- EQU foc_qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA        -100.0000       -10.0000        +INF             .          
+China       393.3333       432.6667        +INF           66.0000      
+ROW         438.0000       438.0000        +INF           29.9106      
+
+---- EQU foc_qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA         320.0862       320.0862        +INF           31.3781      
+China       267.8736       267.8736        +INF           15.8000      
+ROW         298.2931       298.2931        +INF           29.9106      
+
+---- EQU foc_x  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China       -10.0000       -10.0000        +INF           31.3781      
+ROW         -10.0000       207.0425        +INF             .          
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF      5.684342E-14      
+ROW            .            29.9106        +INF      -5.68434E-14      
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .            90.0000      
+China        66.0000        66.0000        66.0000        39.3333      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF      -5.68434E-14      
+ROW            .              .            +INF          217.0425      
+
+---- VAR P  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            10.0000        +INF             .          
+China          .              .            +INF           18.8219      
+ROW            .           217.0425        +INF             .          
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0  REDEFINED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 23
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE simple Using QCP From line 163
+
+
+---- objfn  =E=  
+
+objfn..  - (10.0000000000001)*Qd(USA) + (5.6843418860808E-14)*Qd(China) - (217.042485102626)*Qd(ROW) + (100)*Qs(USA) + (78.6666666666667)*Qs(China) + (217.042485102626)*Qs(ROW) + 10*X(China) + 10*X(ROW) + W =E= 0 ; (LHS = 353.999999999996, INFES = 353.999999999996 ****)
+     
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 24.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 24
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE simple Using QCP From line 163
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+     (-10)      objfn
+       -1       market_clearing(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, 5.6843418860808E-14)
+ (5.684342E-14) objfn
+       -1       market_clearing(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, -5.6843418860808E-14)
+    (-217.0425) objfn
+       -1       market_clearing(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, 89.9999999999999)
+     (100)      objfn
+        1       market_clearing(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 72, 72, 72, 39.3333333333333)
+      (78.6667) objfn
+        1       market_clearing(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+     (217.0425) objfn
+        1       market_clearing(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, -5.6843418860808E-14)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 217.042485102626)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- W  total welfare
+
+W
+                (.LO, .L, .UP, .M = -INF, 29674.6468958772, +INF, 0)
+        1       objfn
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 25
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE simple Using QCP From line 163
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [        NA,        NA] - Zero values observed as well
+Bound     [min, max] : [ 7.200E+01, 7.200E+01] - Zero values observed as well
+Matrix    [min, max] : [ 5.684E-14, 2.170E+02]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 26
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE simple Using QCP From line 163
+
+
+LOOPS                           productionShock   S20
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           2     SINGLE EQUATIONS            4
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES            9
+NON ZERO ELEMENTS            19     NON LINEAR N-Z              6
+CODE LENGTH                  44     CONSTANT POOL              27
+
+
+GENERATION TIME      =        0.016 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S20
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 27
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE simple Using QCP From line 163
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   simple              OBJECTIVE  W
+     TYPE    QCP                 DIRECTION  MAXIMIZE
+     SOLVER  CONOPT              FROM LINE  163
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      2 Locally Optimal
+**** OBJECTIVE VALUE            29320.6469
+
+ RESOURCE USAGE, LIMIT          0.032 10000000000.000
+ ITERATION COUNT, LIMIT         1    2147483647
+ EVALUATION ERRORS              0             0
+ 
+ 
+    C O N O P T   version 4.39.1
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 4 constraints and 9 variables
+    with 19 Jacobian elements, 6 of which are nonlinear.
+    The Hessian of the Lagrangian has 6 elements on the diagonal,
+    0 elements below the diagonal, and 6 nonlinear variables.
+ 
+    The pre-triangular part of the model has 0 constraints and 2 variables.
+    The post-triangular part of the model has 1 constraints and variables.
+    There are 2 penalty and minimax constraints with 2 variables.
+ 
+    Preprocessed model has 3 constraints and 6 variables
+    with 8 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. Reduced gradient less than tolerance.
+ 
+ 
+ CONOPT time Total                            0.004 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.002 = 50.0%
+             2nd Derivative evaluations       0.000 =  0.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU objfn               .              .              .             1.0000      
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF          -10.0000      
+China          .            24.8219        +INF             .          
+ROW            .              .            +INF         -217.0425      
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF            EPS         
+ROW            .            29.9106        +INF            EPS         
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .           -90.0000      
+China        72.0000        72.0000        72.0000       -78.6667      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF            EPS         
+ROW            .              .            +INF         -217.0425      
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR W                 -INF        29320.6469        +INF             .          
+
+  W  total welfare
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 28
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE graphite_mcp Using MCP From line 169
+
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 24.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+
+---- foc_qs  =G=  
+
+foc_qs(USA)..  2*Qs(USA) - P(USA) =G= -100 ; (LHS = -10.0000000000001)
+     
+foc_qs(China)..  6.55555555555556*Qs(China) - P(China) =G= 393.333333333333 ; (LHS = 472)
+     
+foc_qs(ROW)..  21.9*Qs(ROW) - P(ROW) =G= 438 ; (LHS = 438)
+     
+
+---- foc_qd  =G=  
+
+foc_qd(USA)..  9.88225399495374*Qd(USA) + P(USA) =G= 320.086206896552 ; (LHS = 320.086206896552)
+     
+foc_qd(China)..  16.9540229885057*Qd(China) + P(China) =G= 267.873563218391 ; (LHS = 267.873563218391)
+     
+foc_qd(ROW)..  2.71644753162987*Qd(ROW) + P(ROW) =G= 298.293103448276 ; (LHS = 298.293103448276)
+     
+
+---- foc_x  =G=  
+
+foc_x(China)..  - P(USA) + P(China) =G= -10 ; (LHS = -10.0000000000001)
+     
+foc_x(ROW)..  - P(USA) + P(ROW) =G= -10 ; (LHS = 207.042485102626)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 29
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE graphite_mcp Using MCP From line 169
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+       -1       market_clearing(USA)
+        9.8823  foc_qd(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, EPS)
+       -1       market_clearing(China)
+       16.954   foc_qd(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, EPS)
+       -1       market_clearing(ROW)
+        2.7164  foc_qd(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, -89.9999999999999)
+        1       market_clearing(USA)
+        2       foc_qs(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 72, 72, 72, -78.6666666666667)
+        1       market_clearing(China)
+        6.5556  foc_qs(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+        1       market_clearing(ROW)
+       21.9     foc_qs(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, EPS)
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, -217.042485102626)
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- P  
+
+P(USA)
+                (.LO, .L, .UP, .M = 0, 10.0000000000001, +INF, 0)
+       -1       foc_qs(USA)
+        1       foc_qd(USA)
+       -1       foc_x(China)
+       -1       foc_x(ROW)
+
+P(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 18.821914893617)
+       -1       foc_qs(China)
+        1       foc_qd(China)
+        1       foc_x(China)
+
+P(ROW)
+                (.LO, .L, .UP, .M = 0, 217.042485102626, +INF, 0)
+       -1       foc_qs(ROW)
+        1       foc_qd(ROW)
+        1       foc_x(ROW)
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 30
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 1.000E+01, 4.380E+02] - Zero values observed as well
+Bound     [min, max] : [ 7.200E+01, 7.200E+01] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 2.190E+01]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 31
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+LOOPS                           productionShock   S20
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           4     SINGLE EQUATIONS           11
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES           11
+NON ZERO ELEMENTS            26     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16
+
+
+GENERATION TIME      =        0.015 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S20
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 32
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE graphite_mcp Using MCP From line 169
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   graphite_mcp        
+     TYPE    MCP                 
+     SOLVER  PATH                FROM LINE  169
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+
+ RESOURCE USAGE, LIMIT          0.015 10000000000.000
+ ITERATION COUNT, LIMIT         0    2147483647
+ EVALUATION ERRORS              0             0
+9 row/cols, 20 non-zeros, 24.69% dense.
+
+Path 5.2.01 (Fri Aug 21 16:50:07 2026)
+Written by Todd Munson, Steven Dirkse, Youngdae Kim, and Michael Ferris
+
+INITIAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+INITIAL JACOBIAN NORM STATISTICS
+Maximum Row Norm. . . . . . . .  2.2900e+01 eqn: (foc_qs(ROW))
+Minimum Row Norm. . . . . . . .  2.0000e+00 eqn: (market_clearing(China))
+Maximum Column Norm . . . . . .  2.2900e+01 var: (Qs(ROW))
+Minimum Column Norm . . . . . .  2.0000e+00 var: (P(China))
+
+FINAL STATISTICS
+Inf-Norm of Complementarity . .  8.9813e-13 eqn: (foc_qd(China))
+Inf-Norm of Normal Map. . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Minimum Map . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Fischer Function. .  5.6843e-14 eqn: (foc_qd(ROW))
+Inf-Norm of Grad Fischer Fcn. .  9.6372e-13 eqn: (foc_qd(China))
+Two-Norm of Grad Fischer Fcn. .  9.7932e-13
+
+FINAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF           10.0000      
+China          .            24.8219        +INF             .          
+ROW            .              .            +INF          217.0425      
+
+---- EQU foc_qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA        -100.0000       -10.0000        +INF             .          
+China       393.3333       472.0000        +INF           72.0000      
+ROW         438.0000       438.0000        +INF           29.9106      
+
+---- EQU foc_qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA         320.0862       320.0862        +INF           31.3781      
+China       267.8736       267.8736        +INF           15.8000      
+ROW         298.2931       298.2931        +INF           29.9106      
+
+---- EQU foc_x  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China       -10.0000       -10.0000        +INF           31.3781      
+ROW         -10.0000       207.0425        +INF             .          
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF      5.684342E-14      
+ROW            .            29.9106        +INF      -5.68434E-14      
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .            90.0000      
+China        72.0000        72.0000        72.0000        78.6667      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF      -5.68434E-14      
+ROW            .              .            +INF          217.0425      
+
+---- VAR P  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            10.0000        +INF             .          
+China          .              .            +INF           24.8219      
+ROW            .           217.0425        +INF             .          
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0  REDEFINED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 33
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE simple Using QCP From line 163
+
+
+---- objfn  =E=  
+
+objfn..  - (10.0000000000001)*Qd(USA) + (5.6843418860808E-14)*Qd(China) - (217.042485102626)*Qd(ROW) + (100)*Qs(USA) + (118)*Qs(China) + (217.042485102626)*Qs(ROW) + 10*X(China) + 10*X(ROW) + W =E= 0 ; (LHS = 589.999999999996, INFES = 589.999999999996 ****)
+     
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 30.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 34
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE simple Using QCP From line 163
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+     (-10)      objfn
+       -1       market_clearing(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, 5.6843418860808E-14)
+ (5.684342E-14) objfn
+       -1       market_clearing(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, -5.6843418860808E-14)
+    (-217.0425) objfn
+       -1       market_clearing(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, 89.9999999999999)
+     (100)      objfn
+        1       market_clearing(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 78, 78, 78, 78.6666666666667)
+     (118)      objfn
+        1       market_clearing(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+     (217.0425) objfn
+        1       market_clearing(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, -5.6843418860808E-14)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 217.042485102626)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- W  total welfare
+
+W
+                (.LO, .L, .UP, .M = -INF, 29320.6468958772, +INF, 0)
+        1       objfn
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 35
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE simple Using QCP From line 163
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [        NA,        NA] - Zero values observed as well
+Bound     [min, max] : [ 7.800E+01, 7.800E+01] - Zero values observed as well
+Matrix    [min, max] : [ 5.684E-14, 2.170E+02]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 36
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE simple Using QCP From line 163
+
+
+LOOPS                           productionShock   S30
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           2     SINGLE EQUATIONS            4
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES            9
+NON ZERO ELEMENTS            19     NON LINEAR N-Z              6
+CODE LENGTH                  44     CONSTANT POOL              27
+
+
+GENERATION TIME      =        0.000 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S30
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 37
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE simple Using QCP From line 163
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   simple              OBJECTIVE  W
+     TYPE    QCP                 DIRECTION  MAXIMIZE
+     SOLVER  CONOPT              FROM LINE  163
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      2 Locally Optimal
+**** OBJECTIVE VALUE            28730.6469
+
+ RESOURCE USAGE, LIMIT          0.016 10000000000.000
+ ITERATION COUNT, LIMIT         1    2147483647
+ EVALUATION ERRORS              0             0
+ 
+ 
+    C O N O P T   version 4.39.1
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 4 constraints and 9 variables
+    with 19 Jacobian elements, 6 of which are nonlinear.
+    The Hessian of the Lagrangian has 6 elements on the diagonal,
+    0 elements below the diagonal, and 6 nonlinear variables.
+ 
+    The pre-triangular part of the model has 0 constraints and 2 variables.
+    The post-triangular part of the model has 1 constraints and variables.
+    There are 2 penalty and minimax constraints with 2 variables.
+ 
+    Preprocessed model has 3 constraints and 6 variables
+    with 8 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. Reduced gradient less than tolerance.
+ 
+ 
+ CONOPT time Total                            0.016 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.000 =  0.0%
+             2nd Derivative evaluations       0.001 =  6.3%
+             Interval derivative evals        0.000 =  0.0%
+ 
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU objfn               .              .              .             1.0000      
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF          -10.0000      
+China          .            30.8219        +INF             .          
+ROW            .              .            +INF         -217.0425      
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF            EPS         
+ROW            .            29.9106        +INF            EPS         
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .           -90.0000      
+China        78.0000        78.0000        78.0000      -118.0000      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF            EPS         
+ROW            .              .            +INF         -217.0425      
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR W                 -INF        28730.6469        +INF             .          
+
+  W  total welfare
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 38
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE graphite_mcp Using MCP From line 169
+
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 30.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+
+---- foc_qs  =G=  
+
+foc_qs(USA)..  2*Qs(USA) - P(USA) =G= -100 ; (LHS = -10.0000000000001)
+     
+foc_qs(China)..  6.55555555555556*Qs(China) - P(China) =G= 393.333333333333 ; (LHS = 511.333333333333)
+     
+foc_qs(ROW)..  21.9*Qs(ROW) - P(ROW) =G= 438 ; (LHS = 438)
+     
+
+---- foc_qd  =G=  
+
+foc_qd(USA)..  9.88225399495374*Qd(USA) + P(USA) =G= 320.086206896552 ; (LHS = 320.086206896552)
+     
+foc_qd(China)..  16.9540229885057*Qd(China) + P(China) =G= 267.873563218391 ; (LHS = 267.873563218391)
+     
+foc_qd(ROW)..  2.71644753162987*Qd(ROW) + P(ROW) =G= 298.293103448276 ; (LHS = 298.293103448276)
+     
+
+---- foc_x  =G=  
+
+foc_x(China)..  - P(USA) + P(China) =G= -10 ; (LHS = -10.0000000000001)
+     
+foc_x(ROW)..  - P(USA) + P(ROW) =G= -10 ; (LHS = 207.042485102626)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 39
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE graphite_mcp Using MCP From line 169
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+       -1       market_clearing(USA)
+        9.8823  foc_qd(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, EPS)
+       -1       market_clearing(China)
+       16.954   foc_qd(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, EPS)
+       -1       market_clearing(ROW)
+        2.7164  foc_qd(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, -89.9999999999999)
+        1       market_clearing(USA)
+        2       foc_qs(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 78, 78, 78, -118)
+        1       market_clearing(China)
+        6.5556  foc_qs(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+        1       market_clearing(ROW)
+       21.9     foc_qs(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, EPS)
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, -217.042485102626)
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- P  
+
+P(USA)
+                (.LO, .L, .UP, .M = 0, 10.0000000000001, +INF, 0)
+       -1       foc_qs(USA)
+        1       foc_qd(USA)
+       -1       foc_x(China)
+       -1       foc_x(ROW)
+
+P(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 24.821914893617)
+       -1       foc_qs(China)
+        1       foc_qd(China)
+        1       foc_x(China)
+
+P(ROW)
+                (.LO, .L, .UP, .M = 0, 217.042485102626, +INF, 0)
+       -1       foc_qs(ROW)
+        1       foc_qd(ROW)
+        1       foc_x(ROW)
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 40
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 1.000E+01, 4.380E+02] - Zero values observed as well
+Bound     [min, max] : [ 7.800E+01, 7.800E+01] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 2.190E+01]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 41
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+LOOPS                           productionShock   S30
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           4     SINGLE EQUATIONS           11
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES           11
+NON ZERO ELEMENTS            26     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16
+
+
+GENERATION TIME      =        0.000 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S30
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 42
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE graphite_mcp Using MCP From line 169
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   graphite_mcp        
+     TYPE    MCP                 
+     SOLVER  PATH                FROM LINE  169
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+
+ RESOURCE USAGE, LIMIT          0.000 10000000000.000
+ ITERATION COUNT, LIMIT         0    2147483647
+ EVALUATION ERRORS              0             0
+9 row/cols, 20 non-zeros, 24.69% dense.
+
+Path 5.2.01 (Fri Aug 21 16:50:07 2026)
+Written by Todd Munson, Steven Dirkse, Youngdae Kim, and Michael Ferris
+
+INITIAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+INITIAL JACOBIAN NORM STATISTICS
+Maximum Row Norm. . . . . . . .  2.2900e+01 eqn: (foc_qs(ROW))
+Minimum Row Norm. . . . . . . .  2.0000e+00 eqn: (market_clearing(China))
+Maximum Column Norm . . . . . .  2.2900e+01 var: (Qs(ROW))
+Minimum Column Norm . . . . . .  2.0000e+00 var: (P(China))
+
+FINAL STATISTICS
+Inf-Norm of Complementarity . .  8.9813e-13 eqn: (foc_qd(China))
+Inf-Norm of Normal Map. . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Minimum Map . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Fischer Function. .  5.6843e-14 eqn: (foc_qd(ROW))
+Inf-Norm of Grad Fischer Fcn. .  9.6372e-13 eqn: (foc_qd(China))
+Two-Norm of Grad Fischer Fcn. .  9.7932e-13
+
+FINAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF           10.0000      
+China          .            30.8219        +INF             .          
+ROW            .              .            +INF          217.0425      
+
+---- EQU foc_qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA        -100.0000       -10.0000        +INF             .          
+China       393.3333       511.3333        +INF           78.0000      
+ROW         438.0000       438.0000        +INF           29.9106      
+
+---- EQU foc_qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA         320.0862       320.0862        +INF           31.3781      
+China       267.8736       267.8736        +INF           15.8000      
+ROW         298.2931       298.2931        +INF           29.9106      
+
+---- EQU foc_x  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China       -10.0000       -10.0000        +INF           31.3781      
+ROW         -10.0000       207.0425        +INF             .          
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF      5.684342E-14      
+ROW            .            29.9106        +INF      -5.68434E-14      
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .            90.0000      
+China        78.0000        78.0000        78.0000       118.0000      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF      -5.68434E-14      
+ROW            .              .            +INF          217.0425      
+
+---- VAR P  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            10.0000        +INF             .          
+China          .              .            +INF           30.8219      
+ROW            .           217.0425        +INF             .          
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0  REDEFINED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 43
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE simple Using QCP From line 163
+
+
+---- objfn  =E=  
+
+objfn..  - (10.0000000000001)*Qd(USA) + (5.6843418860808E-14)*Qd(China) - (217.042485102626)*Qd(ROW) + (100)*Qs(USA) + (157.333333333333)*Qs(China) + (217.042485102626)*Qs(ROW) + 10*X(China) + 10*X(ROW) + W =E= 0 ; (LHS = 825.999999999996, INFES = 825.999999999996 ****)
+     
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 36.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 44
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE simple Using QCP From line 163
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+     (-10)      objfn
+       -1       market_clearing(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, 5.6843418860808E-14)
+ (5.684342E-14) objfn
+       -1       market_clearing(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, -5.6843418860808E-14)
+    (-217.0425) objfn
+       -1       market_clearing(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, 89.9999999999999)
+     (100)      objfn
+        1       market_clearing(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 84, 84, 84, 118)
+     (157.3333) objfn
+        1       market_clearing(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+     (217.0425) objfn
+        1       market_clearing(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, -5.6843418860808E-14)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 217.042485102626)
+       10       objfn
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- W  total welfare
+
+W
+                (.LO, .L, .UP, .M = -INF, 28730.6468958772, +INF, 0)
+        1       objfn
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 45
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE simple Using QCP From line 163
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [        NA,        NA] - Zero values observed as well
+Bound     [min, max] : [ 8.400E+01, 8.400E+01] - Zero values observed as well
+Matrix    [min, max] : [ 5.684E-14, 2.170E+02]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 46
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE simple Using QCP From line 163
+
+
+LOOPS                           productionShock   S40
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           2     SINGLE EQUATIONS            4
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES            9
+NON ZERO ELEMENTS            19     NON LINEAR N-Z              6
+CODE LENGTH                  44     CONSTANT POOL              27
+
+
+GENERATION TIME      =        0.000 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S40
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 47
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE simple Using QCP From line 163
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   simple              OBJECTIVE  W
+     TYPE    QCP                 DIRECTION  MAXIMIZE
+     SOLVER  CONOPT              FROM LINE  163
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      2 Locally Optimal
+**** OBJECTIVE VALUE            27904.6469
+
+ RESOURCE USAGE, LIMIT          0.016 10000000000.000
+ ITERATION COUNT, LIMIT         1    2147483647
+ EVALUATION ERRORS              0             0
+ 
+ 
+    C O N O P T   version 4.39.1
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 4 constraints and 9 variables
+    with 19 Jacobian elements, 6 of which are nonlinear.
+    The Hessian of the Lagrangian has 6 elements on the diagonal,
+    0 elements below the diagonal, and 6 nonlinear variables.
+ 
+    The pre-triangular part of the model has 0 constraints and 2 variables.
+    The post-triangular part of the model has 1 constraints and variables.
+    There are 2 penalty and minimax constraints with 2 variables.
+ 
+    Preprocessed model has 3 constraints and 6 variables
+    with 8 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. Reduced gradient less than tolerance.
+ 
+ 
+ CONOPT time Total                            0.000 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.000 =  0.0%
+             2nd Derivative evaluations       0.000 =  0.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU objfn               .              .              .             1.0000      
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF          -10.0000      
+China          .            36.8219        +INF             .          
+ROW            .              .            +INF         -217.0425      
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF            EPS         
+ROW            .            29.9106        +INF            EPS         
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .           -90.0000      
+China        84.0000        84.0000        84.0000      -157.3333      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF            EPS         
+ROW            .              .            +INF         -217.0425      
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR W                 -INF        27904.6469        +INF             .          
+
+  W  total welfare
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 48
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Equation Listing    SOLVE graphite_mcp Using MCP From line 169
+
+
+---- market_clearing  =G=  
+
+market_clearing(USA)..  - Qd(USA) + Qs(USA) + X(China) + X(ROW) =G= 0 ; (LHS = 0)
+     
+market_clearing(China)..  - Qd(China) + Qs(China) - X(China) =G= 0 ; (LHS = 36.821914893617)
+     
+market_clearing(ROW)..  - Qd(ROW) + Qs(ROW) - X(ROW) =G= 0 ; (LHS = 0)
+     
+
+---- foc_qs  =G=  
+
+foc_qs(USA)..  2*Qs(USA) - P(USA) =G= -100 ; (LHS = -10.0000000000001)
+     
+foc_qs(China)..  6.55555555555556*Qs(China) - P(China) =G= 393.333333333333 ; (LHS = 550.666666666667)
+     
+foc_qs(ROW)..  21.9*Qs(ROW) - P(ROW) =G= 438 ; (LHS = 438)
+     
+
+---- foc_qd  =G=  
+
+foc_qd(USA)..  9.88225399495374*Qd(USA) + P(USA) =G= 320.086206896552 ; (LHS = 320.086206896552)
+     
+foc_qd(China)..  16.9540229885057*Qd(China) + P(China) =G= 267.873563218391 ; (LHS = 267.873563218391)
+     
+foc_qd(ROW)..  2.71644753162987*Qd(ROW) + P(ROW) =G= 298.293103448276 ; (LHS = 298.293103448276)
+     
+
+---- foc_x  =G=  
+
+foc_x(China)..  - P(USA) + P(China) =G= -10 ; (LHS = -10.0000000000001)
+     
+foc_x(ROW)..  - P(USA) + P(ROW) =G= -10 ; (LHS = 207.042485102626)
+     
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 49
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Column Listing      SOLVE graphite_mcp Using MCP From line 169
+
+
+---- Qd  
+
+Qd(USA)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, 0)
+       -1       market_clearing(USA)
+        9.8823  foc_qd(USA)
+
+Qd(China)
+                (.LO, .L, .UP, .M = 0, 15.8, +INF, EPS)
+       -1       market_clearing(China)
+       16.954   foc_qd(China)
+
+Qd(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, EPS)
+       -1       market_clearing(ROW)
+        2.7164  foc_qd(ROW)
+
+
+---- Qs  
+
+Qs(USA)
+                (.LO, .L, .UP, .M = 0, 0, 0, -89.9999999999999)
+        1       market_clearing(USA)
+        2       foc_qs(USA)
+
+Qs(China)
+                (.LO, .L, .UP, .M = 84, 84, 84, -157.333333333333)
+        1       market_clearing(China)
+        6.5556  foc_qs(China)
+
+Qs(ROW)
+                (.LO, .L, .UP, .M = 0, 29.9106157581108, +INF, 0)
+        1       market_clearing(ROW)
+       21.9     foc_qs(ROW)
+
+
+---- X  exports
+
+X(China)
+                (.LO, .L, .UP, .M = 0, 31.378085106383, +INF, EPS)
+        1       market_clearing(USA)
+       -1       market_clearing(China)
+
+X(ROW)
+                (.LO, .L, .UP, .M = 0, 0, +INF, -217.042485102626)
+        1       market_clearing(USA)
+       -1       market_clearing(ROW)
+
+
+---- P  
+
+P(USA)
+                (.LO, .L, .UP, .M = 0, 10.0000000000001, +INF, 0)
+       -1       foc_qs(USA)
+        1       foc_qd(USA)
+       -1       foc_x(China)
+       -1       foc_x(ROW)
+
+P(China)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 30.821914893617)
+       -1       foc_qs(China)
+        1       foc_qd(China)
+        1       foc_x(China)
+
+P(ROW)
+                (.LO, .L, .UP, .M = 0, 217.042485102626, +INF, 0)
+       -1       foc_qs(ROW)
+        1       foc_qd(ROW)
+        1       foc_x(ROW)
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 50
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Range Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 1.000E+01, 4.380E+02] - Zero values observed as well
+Bound     [min, max] : [ 8.400E+01, 8.400E+01] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 2.190E+01]
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 51
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Model Statistics    SOLVE graphite_mcp Using MCP From line 169
+
+
+LOOPS                           productionShock   S40
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS           4     SINGLE EQUATIONS           11
+BLOCKS OF VARIABLES           4     SINGLE VARIABLES           11
+NON ZERO ELEMENTS            26     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16
+
+
+GENERATION TIME      =        0.016 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+               L O O P S         productionShock S40
+
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 52
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+Solution Report     SOLVE graphite_mcp Using MCP From line 169
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   graphite_mcp        
+     TYPE    MCP                 
+     SOLVER  PATH                FROM LINE  169
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+
+ RESOURCE USAGE, LIMIT          0.016 10000000000.000
+ ITERATION COUNT, LIMIT         0    2147483647
+ EVALUATION ERRORS              0             0
+9 row/cols, 20 non-zeros, 24.69% dense.
+
+Path 5.2.01 (Fri Aug 21 16:50:07 2026)
+Written by Todd Munson, Steven Dirkse, Youngdae Kim, and Michael Ferris
+
+INITIAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+INITIAL JACOBIAN NORM STATISTICS
+Maximum Row Norm. . . . . . . .  2.2900e+01 eqn: (foc_qs(ROW))
+Minimum Row Norm. . . . . . . .  2.0000e+00 eqn: (market_clearing(China))
+Maximum Column Norm . . . . . .  2.2900e+01 var: (Qs(ROW))
+Minimum Column Norm . . . . . .  2.0000e+00 var: (P(China))
+
+FINAL STATISTICS
+Inf-Norm of Complementarity . .  8.9813e-13 eqn: (foc_qd(China))
+Inf-Norm of Normal Map. . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Minimum Map . . . .  5.6843e-14 eqn: (foc_qd(China))
+Inf-Norm of Fischer Function. .  5.6843e-14 eqn: (foc_qd(ROW))
+Inf-Norm of Grad Fischer Fcn. .  9.6372e-13 eqn: (foc_qd(China))
+Two-Norm of Grad Fischer Fcn. .  9.7932e-13
+
+FINAL POINT STATISTICS
+Maximum of X. . . . . . . . . .  2.1704e+02 var: (P(ROW))
+Maximum of F. . . . . . . . . .  2.1704e+02 eqn: (foc_x(ROW))
+Maximum of Grad F . . . . . . .  2.1900e+01 eqn: (foc_qs(ROW))
+                                            var: (Qs(ROW))
+
+
+---- EQU market_clearing  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .            +INF           10.0000      
+China          .            36.8219        +INF             .          
+ROW            .              .            +INF          217.0425      
+
+---- EQU foc_qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA        -100.0000       -10.0000        +INF             .          
+China       393.3333       550.6667        +INF           84.0000      
+ROW         438.0000       438.0000        +INF           29.9106      
+
+---- EQU foc_qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA         320.0862       320.0862        +INF           31.3781      
+China       267.8736       267.8736        +INF           15.8000      
+ROW         298.2931       298.2931        +INF           29.9106      
+
+---- EQU foc_x  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China       -10.0000       -10.0000        +INF           31.3781      
+ROW         -10.0000       207.0425        +INF             .          
+
+---- VAR Qd  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            31.3781        +INF             .          
+China          .            15.8000        +INF      5.684342E-14      
+ROW            .            29.9106        +INF      -5.68434E-14      
+
+---- VAR Qs  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .              .              .            90.0000      
+China        84.0000        84.0000        84.0000       157.3333      
+ROW            .            29.9106        +INF             .          
+
+---- VAR X  exports
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+China          .            31.3781        +INF      -5.68434E-14      
+ROW            .              .            +INF          217.0425      
+
+---- VAR P  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+USA            .            10.0000        +INF             .          
+China          .              .            +INF           36.8219      
+ROW            .           217.0425        +INF             .          
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0  REDEFINED
+                             0     ERRORS
+GAMS 54.3.1  61154be4 Aug 21, 2026          WEX-WEI x86 64bit/MS Windows - 11/09/26 21:04:51 Page 53
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+E x e c u t i o n
+
+
+----    197 PARAMETER baselineChinaProduction =       60.000  
+
+----    198 PARAMETER targetProduction  
+
+S10 66.000,    S20 72.000,    S30 78.000,    S40 84.000
+
+
+----    199 PARAMETER results  
+
+                         USA       China         ROW
+
+Baseline.Exports                  31.378
+Baseline.Price        10.000                 217.042
+Baseline.Demand       31.378      15.800      29.911
+Baseline.Supply                   60.000      29.911
+S10     .Exports                  31.378
+S10     .Price        10.000                 217.042
+S10     .Demand       31.378      15.800      29.911
+S10     .Supply                   66.000      29.911
+S20     .Exports                  31.378
+S20     .Price        10.000                 217.042
+S20     .Demand       31.378      15.800      29.911
+S20     .Supply                   72.000      29.911
+S30     .Exports                  31.378
+S30     .Price        10.000                 217.042
+S30     .Demand       31.378      15.800      29.911
+S30     .Supply                   78.000      29.911
+S40     .Exports                  31.378
+S40     .Price        10.000                 217.042
+S40     .Demand       31.378      15.800      29.911
+S40     .Supply                   84.000      29.911
+
+
+----    200 PARAMETER welfare  
+
+Baseline 29792.647,    S10      29674.647,    S20      29320.647,    S30      28730.647,    S40      27904.647
+
+
+
+EXECUTION TIME       =        0.656 SECONDS      4 MB  54.3.1 61154be4 WEX-WEI
+
+
+USER: Course License                                 G260809+0003Ac-GEN
+      Colorado School of Mines                                  DCE5587
+      License for teaching and research at degree granting institutions
+
+
+**** FILE SUMMARY
+
+Input      c:\Users\jverw\OneDrive\Documents\GitHub\EGBN 645 Fall\MPC_Graphite2_milestone_2.gms
+Output     c:\Users\jverw\OneDrive\Documents\GitHub\EGBN 645 Fall\MPC_Graphite2_milestone_2.lst

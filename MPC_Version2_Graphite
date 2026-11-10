@@ -1,0 +1,109 @@
+model graphite_mcp
+/
+market_clearing.P,
+foc_qs.qs,
+foc_qd.qd,
+foc_x.X
+/;
+
+* ==========================================
+* MILESTONE 1: CHINESE MARKET FLOODING
+* ==========================================
+
+* Solve baseline equilibrium
+P.l(r) = max(0, -market_clearing.m(r));
+solve graphite_mcp using MCP;
+
+* Chinese export increase scenarios
+set chinaShock /S10, S20, S30, S40/;
+
+parameter shockPct(chinaShock)
+/
+S10 0.10
+S20 0.20
+S30 0.30
+S40 0.40
+/;
+
+parameter results(*,*,r);
+parameter welfare(*);
+parameter targetExports(chinaShock);
+
+scalar baselineChinaExports;
+
+* Save baseline Chinese exports
+baselineChinaExports = X.l("China");
+
+* Save baseline results
+results("BAU","Price",r)   = P.l(r);
+results("BAU","Demand",r)  = Qd.l(r);
+results("BAU","Supply",r)  = Qs.l(r);
+results("BAU","Exports",r) = X.l(r);
+
+welfare("BAU") =
+    sum(r,
+        a(r)*Qd.l(r)
+        + b(r)*sqr(Qd.l(r))/2
+        - c(r)*Qs.l(r)
+        - d(r)*sqr(Qs.l(r))/2
+    )
+    - sum(r,tradeCost(r)*X.l(r));
+
+* ==========================================
+* CHINESE EXPORT EXPANSION SCENARIOS
+* ==========================================
+
+loop(chinaShock,
+
+    * Increase Chinese exports by 10, 20, 30, or 40%
+    X.fx("China") =
+        baselineChinaExports*(1+shockPct(chinaShock));
+
+    targetExports(chinaShock) =
+        baselineChinaExports*(1+shockPct(chinaShock));
+
+    * Solve new welfare equilibrium
+    solve simple using QCP maximizing W;
+
+    * Initialize equilibrium prices
+    P.l(r) = max(0, -market_clearing.m(r));
+
+    * Solve MCP
+    solve graphite_mcp using MCP;
+
+    * Save equilibrium results
+    results(chinaShock,"Price",r)   = P.l(r);
+    results(chinaShock,"Demand",r)  = Qd.l(r);
+    results(chinaShock,"Supply",r)  = Qs.l(r);
+    results(chinaShock,"Exports",r) = X.l(r);
+
+    * Calculate welfare
+    welfare(chinaShock) =
+        sum(r,
+            a(r)*Qd.l(r)
+            + b(r)*sqr(Qd.l(r))/2
+            - c(r)*Qs.l(r)
+            - d(r)*sqr(Qs.l(r))/2
+        )
+        - sum(r,tradeCost(r)*X.l(r));
+
+);
+
+* Restore unrestricted Chinese exports
+X.lo("China") = 0;
+X.up("China") = +inf;
+
+* ==========================================
+* DISPLAY RESULTS
+* ==========================================
+
+display baselineChinaExports;
+display targetExports;
+display results;
+display welfare;
+
+* Export results
+execute_unload 'graphite_milestone1.gdx',
+    results, welfare, targetExports;
+
+$exit
