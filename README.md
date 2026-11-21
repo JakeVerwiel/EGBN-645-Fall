@@ -8,9 +8,9 @@ Under both files the output tables can be found fia the following table titles o
 2. Stage 2 (EQM/Substitution and Chinese Expansion EQM): Parameter M2Results
 3. Stage 3 (EQM/new market entrant and Chinese Expansion EQM): Parameter report3 *I am ging to fix this in the final iteration
 
-Input and Calibration Data
-UNfortunately I hardcoded it in, so I am pasting it here, and in the model gms for reference
-Calibration Data is as follow (all under the following titles
+Input and Calibration Data:
+  Unfortunately I hardcoded it in, so I am pasting it here, and in the model gms for reference
+  Calibration Data is as follow (all under the following titles
 
 * REGIONAL BASELINE
 * Quantities are in model units. For reporting, 1 unit = 15,500 tonnes/year.
