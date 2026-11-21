@@ -3,10 +3,10 @@ Model Code: it is listed under MPC_Graphite2_milestone_3.gms
 There are two methods of seeing results
   1. The lst file: MPC_Graphite2_milsestone_3.lst
   2. The gdx file: graphite_milestone3.gdx
-       Under both files the output tables can be found fia the following table titles or list files
-           1. Stage 1 (EQM and Chinese Expansion EQM): Parameter Results
-           2. Stage 2 (EQM/Substitution and Chinese Expansion EQM): Parameter M2Results
-           3. Stage 3 (EQM/new market entrant and Chinese Expansion EQM): Parameter report3 *I am ging to fix this in the final iteration
+Under both files the output tables can be found fia the following table titles or list files
+1. Stage 1 (EQM and Chinese Expansion EQM): Parameter Results
+2. Stage 2 (EQM/Substitution and Chinese Expansion EQM): Parameter M2Results
+3. Stage 3 (EQM/new market entrant and Chinese Expansion EQM): Parameter report3 *I am ging to fix this in the final iteration
 
 Input and Calibration Data
 UNfortunately I hardcoded it in, so I am pasting it here, and in the model gms for reference
