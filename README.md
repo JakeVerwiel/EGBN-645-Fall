@@ -1,6 +1,6 @@
 The Model runs properly without errors and important notes to get the results are as follows
 Model Code: it is listed under MPC_Graphite2_milestone_3.gms
-There are two methods of seeing results
+  There are two methods of seeing results
   1. The lst file: MPC_Graphite2_milsestone_3.lst
   2. The gdx file: graphite_milestone3.gdx
 Under both files the output tables can be found fia the following table titles or list files
